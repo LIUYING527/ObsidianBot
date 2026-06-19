@@ -3,6 +3,7 @@ import base64
 import hashlib
 import os
 import re
+import struct
 import time
 import xml.etree.ElementTree as ET
 from datetime import datetime
@@ -20,6 +21,11 @@ WX_TOKEN = os.environ["WX_TOKEN"]
 DEEPSEEK_API_KEY = os.environ["DEEPSEEK_API_KEY"]
 SUPABASE_URL = os.environ["SUPABASE_URL"]
 SUPABASE_KEY = os.environ["SUPABASE_KEY"]
+
+# 企业微信群机器人
+WECOM_TOKEN = os.environ.get("WECOM_TOKEN", "")
+WECOM_ENCODING_AES_KEY = os.environ.get("WECOM_ENCODING_AES_KEY", "")
+WECOM_BOT_WEBHOOK = os.environ.get("WECOM_BOT_WEBHOOK", "")
 
 deepseek = OpenAI(api_key=DEEPSEEK_API_KEY, base_url="https://api.deepseek.com")
 
@@ -220,3 +226,93 @@ async def receive(
         reply = _reply_text(from_user, to_user, f"暂不支持 {msg_type} 类型")
 
     return PlainTextResponse(reply, media_type="application/xml")
+
+
+# ── 企业微信群机器人 ────────────────────────────────────────────────
+
+def _wecom_decrypt(encrypted_msg: str) -> str:
+    from Crypto.Cipher import AES
+    aes_key = base64.b64decode(WECOM_ENCODING_AES_KEY + "=")
+    cipher = AES.new(aes_key, AES.MODE_CBC, aes_key[:16])
+    decrypted = cipher.decrypt(base64.b64decode(encrypted_msg))
+    pad_size = decrypted[-1]
+    decrypted = decrypted[:-pad_size]
+    msg_len = struct.unpack(">I", decrypted[16:20])[0]
+    return decrypted[20:20 + msg_len].decode("utf-8")
+
+
+def _wecom_verify_sig(timestamp: str, nonce: str, encrypted: str, signature: str) -> bool:
+    items = sorted([WECOM_TOKEN, timestamp, nonce, encrypted])
+    expected = hashlib.sha1("".join(items).encode()).hexdigest()
+    return expected == signature
+
+
+async def wecom_reply(text: str):
+    async with httpx.AsyncClient(timeout=10) as c:
+        await c.post(WECOM_BOT_WEBHOOK, json={
+            "msgtype": "markdown",
+            "markdown": {"content": text},
+        })
+
+
+async def wecom_process_image(pic_url: str):
+    await wecom_reply("图片已收到，正在分析...")
+    async with httpx.AsyncClient(timeout=30) as c:
+        r = await c.get(pic_url)
+        img_bytes = r.content
+    result = analyze_image(img_bytes)
+    await wecom_reply(f"**图片分析结果**\n\n{result[:3500]}")
+
+
+async def wecom_process_text(text: str):
+    urls = re.findall(r'https?://\S+', text)
+    if not urls:
+        await wecom_reply("暂只支持图片和链接~")
+        return
+    url = urls[0]
+    await wecom_reply(f"链接已收到，正在分析...\n> {url}")
+    page_text = await fetch_url_content(url)
+    result = summarize_url(url, url, page_text)
+    await wecom_reply(f"**分析结果**\n\n{result[:3500]}")
+
+
+@app.get("/wecom/callback")
+async def wecom_verify(
+    msg_signature: str = Query(...),
+    timestamp: str = Query(...),
+    nonce: str = Query(...),
+    echostr: str = Query(...),
+):
+    if not _wecom_verify_sig(timestamp, nonce, echostr, msg_signature):
+        return PlainTextResponse("forbidden", status_code=403)
+    plain = _wecom_decrypt(echostr)
+    return PlainTextResponse(plain)
+
+
+@app.post("/wecom/callback")
+async def wecom_receive(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    msg_signature: str = Query(...),
+    timestamp: str = Query(...),
+    nonce: str = Query(...),
+):
+    body = (await request.body()).decode()
+    root = ET.fromstring(body)
+    encrypted = root.findtext("Encrypt") or ""
+    if not _wecom_verify_sig(timestamp, nonce, encrypted, msg_signature):
+        return PlainTextResponse("forbidden", status_code=403)
+
+    xml_str = _wecom_decrypt(encrypted)
+    msg = ET.fromstring(xml_str)
+    msg_type = msg.findtext("MsgType") or ""
+
+    if msg_type == "image":
+        pic_url = msg.findtext("PicUrl") or ""
+        if pic_url:
+            background_tasks.add_task(wecom_process_image, pic_url)
+    elif msg_type == "text":
+        content = msg.findtext("Content") or ""
+        background_tasks.add_task(wecom_process_text, content)
+
+    return PlainTextResponse("success")
