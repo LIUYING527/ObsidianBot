@@ -272,7 +272,7 @@ async def wecom_process_image(pic_url: str, response_url: str = ""):
         r = await c.get(pic_url)
         img_bytes = r.content
     result = analyze_image(img_bytes)
-    await wecom_reply_to(response_url, f"**图片分析结果**\n\n{result[:3500]}")
+    await wecom_reply(f"**图片分析结果**\n\n{result[:3500]}")
 
 
 async def wecom_process_text(text: str, response_url: str = ""):
@@ -287,16 +287,16 @@ async def wecom_process_text(text: str, response_url: str = ""):
         print(f"[wecom] fetched {len(page_text)} chars", flush=True)
     except Exception as e:
         print(f"[wecom] fetch error: {e}", flush=True)
-        await wecom_reply_to(response_url, f"抓取链接失败：{e}")
+        await wecom_reply(f"抓取链接失败：{e}")
         return
     try:
         result = summarize_url(url, url, page_text)
         print(f"[wecom] summarized {len(result)} chars", flush=True)
     except Exception as e:
         print(f"[wecom] summarize error: {e}", flush=True)
-        await wecom_reply_to(response_url, f"AI分析失败：{e}")
+        await wecom_reply(f"AI分析失败：{e}")
         return
-    await wecom_reply_to(response_url, f"**分析结果**\n\n{result[:3500]}")
+    await wecom_reply(f"**分析结果**\n\n{result[:3500]}")
 
 
 @app.get("/wecom/callback")
