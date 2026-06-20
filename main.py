@@ -248,12 +248,19 @@ def _wecom_verify_sig(timestamp: str, nonce: str, encrypted: str, signature: str
     return expected == signature
 
 
+def _truncate_utf8(text: str, max_bytes: int = 3800) -> str:
+    encoded = text.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return text
+    return encoded[:max_bytes].decode("utf-8", errors="ignore")
+
+
 async def wecom_reply(text: str):
     try:
         async with httpx.AsyncClient(timeout=10) as c:
             r = await c.post(WECOM_BOT_WEBHOOK, json={
                 "msgtype": "markdown",
-                "markdown": {"content": text},
+                "markdown": {"content": _truncate_utf8(text)},
             })
             print(f"[wecom_reply] status={r.status_code} body={r.text[:200]}", flush=True)
     except Exception as e:
@@ -276,7 +283,7 @@ async def wecom_process_image(pic_url: str, response_url: str = ""):
         r = await c.get(pic_url)
         img_bytes = r.content
     result = analyze_image(img_bytes)
-    await wecom_reply(f"**图片分析结果**\n\n{result[:3500]}")
+    await wecom_reply(f"**图片分析结果**\n\n{result}")
 
 
 async def wecom_process_text(text: str, response_url: str = ""):
@@ -300,7 +307,7 @@ async def wecom_process_text(text: str, response_url: str = ""):
         print(f"[wecom] summarize error: {e}", flush=True)
         await wecom_reply(f"AI分析失败：{e}")
         return
-    await wecom_reply(f"**分析结果**\n\n{result[:3500]}")
+    await wecom_reply(f"**分析结果**\n\n{result}")
 
 
 @app.get("/wecom/callback")
