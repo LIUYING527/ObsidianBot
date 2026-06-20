@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import hashlib
+import json
 import os
 import re
 import struct
@@ -305,13 +306,13 @@ async def wecom_receive(
         print(f"[wecom POST] decode error: {e}", flush=True)
         return PlainTextResponse("success")
 
+    # 智能机器人用 JSON，字段名是小写 encrypt
     try:
-        root = ET.fromstring(body)
-    except ET.ParseError as e:
-        print(f"[wecom POST] XML parse error: {e}\nbody={body[:300]}", flush=True)
+        data = json.loads(body)
+        encrypted = data.get("encrypt", "")
+    except json.JSONDecodeError as e:
+        print(f"[wecom POST] JSON parse error: {e}\nbody={body[:300]}", flush=True)
         return PlainTextResponse("success")
-
-    encrypted = root.findtext("Encrypt") or ""
     if not _wecom_verify_sig(timestamp, nonce, encrypted, msg_signature):
         print("[wecom POST] signature mismatch", flush=True)
         return PlainTextResponse("forbidden", status_code=403)
