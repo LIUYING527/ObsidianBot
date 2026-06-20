@@ -297,15 +297,35 @@ async def wecom_receive(
     timestamp: str = Query(...),
     nonce: str = Query(...),
 ):
-    body = (await request.body()).decode()
-    root = ET.fromstring(body)
+    raw = await request.body()
+    print(f"[wecom POST] raw bytes({len(raw)}): {raw[:200]}", flush=True)
+    try:
+        body = raw.decode("utf-8")
+    except Exception as e:
+        print(f"[wecom POST] decode error: {e}", flush=True)
+        return PlainTextResponse("success")
+
+    try:
+        root = ET.fromstring(body)
+    except ET.ParseError as e:
+        print(f"[wecom POST] XML parse error: {e}\nbody={body[:300]}", flush=True)
+        return PlainTextResponse("success")
+
     encrypted = root.findtext("Encrypt") or ""
     if not _wecom_verify_sig(timestamp, nonce, encrypted, msg_signature):
+        print("[wecom POST] signature mismatch", flush=True)
         return PlainTextResponse("forbidden", status_code=403)
 
-    xml_str = _wecom_decrypt(encrypted)
+    try:
+        xml_str = _wecom_decrypt(encrypted)
+        print(f"[wecom POST] decrypted: {xml_str[:300]}", flush=True)
+    except Exception as e:
+        print(f"[wecom POST] decrypt error: {e}", flush=True)
+        return PlainTextResponse("success")
+
     msg = ET.fromstring(xml_str)
     msg_type = msg.findtext("MsgType") or ""
+    print(f"[wecom POST] msg_type={msg_type}", flush=True)
 
     if msg_type == "image":
         pic_url = msg.findtext("PicUrl") or ""
