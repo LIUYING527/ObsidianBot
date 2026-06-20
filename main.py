@@ -256,25 +256,35 @@ async def wecom_reply(text: str):
         })
 
 
-async def wecom_process_image(pic_url: str):
-    await wecom_reply("图片已收到，正在分析...")
+async def wecom_reply_to(response_url: str, text: str):
+    """用 response_url 回复，fallback 到群 webhook"""
+    target = response_url or WECOM_BOT_WEBHOOK
+    if not target:
+        return
+    payload = {"msgtype": "markdown", "markdown": {"content": text}}
+    async with httpx.AsyncClient(timeout=10) as c:
+        await c.post(target, json=payload)
+
+
+async def wecom_process_image(pic_url: str, response_url: str = ""):
+    await wecom_reply_to(response_url, "图片已收到，正在分析...")
     async with httpx.AsyncClient(timeout=30) as c:
         r = await c.get(pic_url)
         img_bytes = r.content
     result = analyze_image(img_bytes)
-    await wecom_reply(f"**图片分析结果**\n\n{result[:3500]}")
+    await wecom_reply_to(response_url, f"**图片分析结果**\n\n{result[:3500]}")
 
 
-async def wecom_process_text(text: str):
+async def wecom_process_text(text: str, response_url: str = ""):
     urls = re.findall(r'https?://\S+', text)
     if not urls:
-        await wecom_reply("暂只支持图片和链接~")
+        await wecom_reply_to(response_url, "暂只支持图片和链接~")
         return
     url = urls[0]
-    await wecom_reply(f"链接已收到，正在分析...\n> {url}")
+    await wecom_reply_to(response_url, f"链接已收到，正在分析...\n> {url}")
     page_text = await fetch_url_content(url)
     result = summarize_url(url, url, page_text)
-    await wecom_reply(f"**分析结果**\n\n{result[:3500]}")
+    await wecom_reply_to(response_url, f"**分析结果**\n\n{result[:3500]}")
 
 
 @app.get("/wecom/callback")
@@ -318,22 +328,29 @@ async def wecom_receive(
         return PlainTextResponse("forbidden", status_code=403)
 
     try:
-        xml_str = _wecom_decrypt(encrypted)
-        print(f"[wecom POST] decrypted: {xml_str[:300]}", flush=True)
+        msg_str = _wecom_decrypt(encrypted)
+        print(f"[wecom POST] decrypted: {msg_str[:300]}", flush=True)
     except Exception as e:
         print(f"[wecom POST] decrypt error: {e}", flush=True)
         return PlainTextResponse("success")
 
-    msg = ET.fromstring(xml_str)
-    msg_type = msg.findtext("MsgType") or ""
+    # 智能机器人消息是 JSON
+    try:
+        msg = json.loads(msg_str)
+    except json.JSONDecodeError as e:
+        print(f"[wecom POST] msg JSON parse error: {e}", flush=True)
+        return PlainTextResponse("success")
+
+    msg_type = msg.get("msgtype", "")
+    response_url = msg.get("response_url", "")
     print(f"[wecom POST] msg_type={msg_type}", flush=True)
 
     if msg_type == "image":
-        pic_url = msg.findtext("PicUrl") or ""
+        pic_url = msg.get("image", {}).get("url", "")
         if pic_url:
-            background_tasks.add_task(wecom_process_image, pic_url)
+            background_tasks.add_task(wecom_process_image, pic_url, response_url)
     elif msg_type == "text":
-        content = msg.findtext("Content") or ""
-        background_tasks.add_task(wecom_process_text, content)
+        content = msg.get("text", {}).get("content", "")
+        background_tasks.add_task(wecom_process_text, content, response_url)
 
     return PlainTextResponse("success")
