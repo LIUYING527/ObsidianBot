@@ -249,11 +249,15 @@ def _wecom_verify_sig(timestamp: str, nonce: str, encrypted: str, signature: str
 
 
 async def wecom_reply(text: str):
-    async with httpx.AsyncClient(timeout=10) as c:
-        await c.post(WECOM_BOT_WEBHOOK, json={
-            "msgtype": "markdown",
-            "markdown": {"content": text},
-        })
+    try:
+        async with httpx.AsyncClient(timeout=10) as c:
+            r = await c.post(WECOM_BOT_WEBHOOK, json={
+                "msgtype": "markdown",
+                "markdown": {"content": text},
+            })
+            print(f"[wecom_reply] status={r.status_code} body={r.text[:200]}", flush=True)
+    except Exception as e:
+        print(f"[wecom_reply] error: {e}", flush=True)
 
 
 async def wecom_reply_to(response_url: str, text: str):
