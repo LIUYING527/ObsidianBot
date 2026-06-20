@@ -282,8 +282,20 @@ async def wecom_process_text(text: str, response_url: str = ""):
         return
     url = urls[0]
     await wecom_reply_to(response_url, f"链接已收到，正在分析...\n> {url}")
-    page_text = await fetch_url_content(url)
-    result = summarize_url(url, url, page_text)
+    try:
+        page_text = await fetch_url_content(url)
+        print(f"[wecom] fetched {len(page_text)} chars", flush=True)
+    except Exception as e:
+        print(f"[wecom] fetch error: {e}", flush=True)
+        await wecom_reply_to(response_url, f"抓取链接失败：{e}")
+        return
+    try:
+        result = summarize_url(url, url, page_text)
+        print(f"[wecom] summarized {len(result)} chars", flush=True)
+    except Exception as e:
+        print(f"[wecom] summarize error: {e}", flush=True)
+        await wecom_reply_to(response_url, f"AI分析失败：{e}")
+        return
     await wecom_reply_to(response_url, f"**分析结果**\n\n{result[:3500]}")
 
 
