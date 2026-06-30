@@ -142,8 +142,9 @@ async def fetch_url_content(url: str) -> str:
 def analyze_image(image_bytes: bytes, hint: str = "") -> str:
     b64 = base64.b64encode(image_bytes).decode()
     prompt = (
-        "请详细分析这张图片的内容，提取所有文字信息、关键概念和要点，"
-        "整理成结构清晰的Markdown笔记。使用##标题、-列表等Markdown格式。"
+        "请详细分析这张图片的内容，提取所有文字信息、关键概念和要点，整理成结构清晰的笔记。\n"
+        "格式要求：只用 ## ### 做标题，**粗体** 强调关键词，- 做列表，> 做引用。"
+        "禁止使用代码块(```)、分割线(---)、表格、HTML标签。"
     )
     if hint:
         prompt += f"\n文件名提示：{hint}"
@@ -168,8 +169,14 @@ def summarize_url(title: str, url: str, page_text: str) -> str:
         messages=[{
             "role": "user",
             "content": (
-                f"请总结以下网页内容，整理成结构清晰的Markdown笔记，"
-                f"包含关键要点、重要概念、结论等。\n"
+                "请总结以下网页内容，整理成结构清晰的笔记。\n"
+                "格式要求（严格遵守）：\n"
+                "- 只用 ## 和 ### 做标题\n"
+                "- 用 **粗体** 强调关键词\n"
+                "- 用 - 做列表项\n"
+                "- 用 > 做金句引用\n"
+                "- 禁止使用：代码块(```)、分割线(---)、表格、HTML标签\n"
+                "- 包含：核心观点、关键要点、结论\n\n"
                 f"标题：{title}\n链接：{url}\n\n内容：\n{page_text}"
             ),
         }],
