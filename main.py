@@ -294,21 +294,33 @@ def _wecom_verify_sig(timestamp: str, nonce: str, encrypted: str, signature: str
     return expected == signature
 
 
-def _truncate_utf8(text: str, max_bytes: int = 3800) -> str:
-    encoded = text.encode("utf-8")
-    if len(encoded) <= max_bytes:
-        return text
-    return encoded[:max_bytes].decode("utf-8", errors="ignore")
+def _split_utf8(text: str, max_bytes: int = 3800) -> list:
+    """按 UTF-8 字节数分段，保证每段不超限"""
+    chunks = []
+    while text:
+        encoded = text.encode("utf-8")
+        if len(encoded) <= max_bytes:
+            chunks.append(text)
+            break
+        # 二分找到安全切割点
+        chunk = encoded[:max_bytes].decode("utf-8", errors="ignore")
+        chunks.append(chunk)
+        text = text[len(chunk):]
+    return chunks
 
 
 async def wecom_reply(text: str):
+    chunks = _split_utf8(text)
+    total = len(chunks)
     try:
         async with httpx.AsyncClient(timeout=10) as c:
-            r = await c.post(WECOM_BOT_WEBHOOK, json={
-                "msgtype": "markdown",
-                "markdown": {"content": _truncate_utf8(text)},
-            })
-            print(f"[wecom_reply] status={r.status_code} body={r.text[:200]}", flush=True)
+            for i, chunk in enumerate(chunks):
+                content = chunk if total == 1 else f"（{i+1}/{total}）\n{chunk}"
+                r = await c.post(WECOM_BOT_WEBHOOK, json={
+                    "msgtype": "markdown",
+                    "markdown": {"content": content},
+                })
+                print(f"[wecom_reply] chunk={i+1}/{total} status={r.status_code}", flush=True)
     except Exception as e:
         print(f"[wecom_reply] error: {e}", flush=True)
 
