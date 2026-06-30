@@ -78,17 +78,40 @@ async def download_media(media_id: str, token: str) -> bytes:
 
 # ── 网页抓取 ────────────────────────────────────────────────────────
 
+def _clean_weixin_url(url: str) -> str:
+    """去掉微信追踪参数，只保留文章 ID"""
+    import urllib.parse
+    parsed = urllib.parse.urlparse(url)
+    # 只保留 path，去掉所有 query 参数（scene/clicktime/sessionid 等会触发环境异常）
+    clean = urllib.parse.urlunparse(parsed._replace(query="", fragment=""))
+    return clean
+
+
 async def fetch_url_content(url: str) -> str:
     """抓取网页正文，微信文章走 Jina Reader"""
     if "mp.weixin.qq.com" in url:
-        fetch_url = f"https://r.jina.ai/{url}"
+        clean_url = _clean_weixin_url(url)
+        fetch_url = f"https://r.jina.ai/{clean_url}"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (compatible; ObsidianBot/1.0)",
+            "Accept": "text/plain",
+            "X-No-Cache": "true",
+        }
+        jina_api_key = os.environ.get("JINA_API_KEY", "")
+        if jina_api_key:
+            headers["Authorization"] = f"Bearer {jina_api_key}"
     else:
         fetch_url = url
+        headers = {"User-Agent": "Mozilla/5.0 (compatible; ObsidianBot/1.0)"}
 
-    headers = {"User-Agent": "Mozilla/5.0 (compatible; ObsidianBot/1.0)"}
     async with httpx.AsyncClient(timeout=30, follow_redirects=True) as c:
         r = await c.get(fetch_url, headers=headers)
-        return r.text[:8000]
+        text = r.text
+        print(f"[fetch] status={r.status_code} chars={len(text)} url={fetch_url[:80]}", flush=True)
+        if len(text) < 200 or "环境异常" in text or "verify" in text.lower():
+            print(f"[fetch] jina failed, raw preview: {text[:300]}", flush=True)
+            raise ValueError(f"无法抓取文章内容（Jina返回异常），原始链接：{url}")
+        return text[:8000]
 
 
 # ── AI 分析 ────────────────────────────────────────────────────────
