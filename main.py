@@ -82,36 +82,59 @@ def _clean_weixin_url(url: str) -> str:
     """去掉微信追踪参数，只保留文章 ID"""
     import urllib.parse
     parsed = urllib.parse.urlparse(url)
-    # 只保留 path，去掉所有 query 参数（scene/clicktime/sessionid 等会触发环境异常）
-    clean = urllib.parse.urlunparse(parsed._replace(query="", fragment=""))
-    return clean
+    return urllib.parse.urlunparse(parsed._replace(query="", fragment=""))
+
+
+def _extract_weixin_text(html: str) -> str:
+    """从微信文章 HTML 中提取正文纯文本"""
+    from bs4 import BeautifulSoup
+    soup = BeautifulSoup(html, "html.parser")
+
+    # 文章标题
+    title_tag = soup.find("h1", class_="rich_media_title") or soup.find("meta", {"property": "og:title"})
+    title = ""
+    if title_tag:
+        title = title_tag.get_text(strip=True) if hasattr(title_tag, "get_text") else title_tag.get("content", "")
+
+    # 正文区域
+    content_div = soup.find("div", id="js_content") or soup.find("div", class_="rich_media_content")
+    if not content_div:
+        return ""
+
+    # 去掉脚本、样式
+    for tag in content_div(["script", "style"]):
+        tag.decompose()
+
+    text = content_div.get_text(separator="\n", strip=True)
+    result = f"标题：{title}\n\n{text}" if title else text
+    return result
 
 
 async def fetch_url_content(url: str) -> str:
-    """抓取网页正文，微信文章走 Jina Reader"""
+    """抓取网页正文；微信文章用微信 UA 直接抓取并解析正文"""
     if "mp.weixin.qq.com" in url:
         clean_url = _clean_weixin_url(url)
-        fetch_url = f"https://r.jina.ai/{clean_url}"
-        headers = {
-            "User-Agent": "Mozilla/5.0 (compatible; ObsidianBot/1.0)",
-            "Accept": "text/plain",
-            "X-No-Cache": "true",
-        }
-        jina_api_key = os.environ.get("JINA_API_KEY", "")
-        if jina_api_key:
-            headers["Authorization"] = f"Bearer {jina_api_key}"
-    else:
-        fetch_url = url
-        headers = {"User-Agent": "Mozilla/5.0 (compatible; ObsidianBot/1.0)"}
-
-    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as c:
-        r = await c.get(fetch_url, headers=headers)
-        text = r.text
-        print(f"[fetch] status={r.status_code} chars={len(text)} url={fetch_url[:80]}", flush=True)
-        if len(text) < 200 or "环境异常" in text or "verify" in text.lower():
-            print(f"[fetch] jina failed, raw preview: {text[:300]}", flush=True)
-            raise ValueError(f"无法抓取文章内容（Jina返回异常），原始链接：{url}")
+        # 微信服务器对 MicroMessenger UA 不做环境异常校验
+        wx_ua = (
+            "Mozilla/5.0 (Linux; Android 12; Pixel 6) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/112.0.0.0 Mobile Safari/537.36 "
+            "MicroMessenger/8.0.38.2380(0x28002638) NetType/WIFI Language/zh_CN"
+        )
+        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as c:
+            r = await c.get(clean_url, headers={"User-Agent": wx_ua})
+        print(f"[fetch] weixin status={r.status_code} html_len={len(r.text)}", flush=True)
+        if "环境异常" in r.text or r.status_code != 200:
+            raise ValueError(f"微信文章无法访问（可能需要关注公众号），链接：{url}")
+        text = _extract_weixin_text(r.text)
+        if len(text) < 100:
+            raise ValueError(f"微信文章正文提取失败（可能需要关注公众号），链接：{url}")
+        print(f"[fetch] extracted text_len={len(text)}", flush=True)
         return text[:8000]
+    else:
+        headers = {"User-Agent": "Mozilla/5.0 (compatible; ObsidianBot/1.0)"}
+        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as c:
+            r = await c.get(url, headers=headers)
+        return r.text[:8000]
 
 
 # ── AI 分析 ────────────────────────────────────────────────────────
